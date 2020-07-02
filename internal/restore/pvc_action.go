@@ -18,6 +18,9 @@ package restore
 
 import (
 	"fmt"
+	veleroClient "github.com/vmware-tanzu/velero/pkg/client"
+	"github.com/vmware-tanzu/velero/pkg/install"
+	"os"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -131,13 +134,89 @@ func (p *PVCRestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInp
 
 	resetPVCSpec(&pvc, volumeSnapshotName)
 
-	pvcMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&pvc)
-	if err != nil {
+	p.Log.Info("Ready to hack PVC")
+	if err = createPVCResource(&pvc, p.Log); err != nil {
+		p.Log.Errorf("Failed to create PVC: %v", err)
 		return nil, errors.WithStack(err)
 	}
+	p.Log.Info("PVC %s created", pvc.Name)
+
 	p.Log.Infof("Returning from PVCRestoreItemAction for PVC %s/%s", pvc.Namespace, pvc.Name)
 
 	return &velero.RestoreItemActionExecuteOutput{
-		UpdatedItem: &unstructured.Unstructured{Object: pvcMap},
+		SkipRestore: true,
 	}, nil
+}
+
+func createPVCResource(pvc *corev1api.PersistentVolumeClaim, logger logrus.FieldLogger) error {
+		config, err := veleroClient.LoadConfig()
+		if err != nil {
+			return errors.Wrap(err, "Failed to read config file")
+		}
+
+		dynamicClient, err := veleroClient.NewFactory("velero", config).DynamicClient()
+		if err != nil {
+			return errors.WithStack(err)
+		}
+
+		pvc, err = handleUnstructuredPVC(pvc)
+		if err != nil {
+			return errors.Wrap(err, "Failed to handle unstructured PVC for the purpose of dynamic provisioning")
+		}
+
+		logger.Infof("PVC = %v", pvc)
+
+		resources := new(unstructured.UnstructuredList)
+		if err := appendUnstructuredPVC(resources, pvc); err != nil {
+			return errors.Wrap(err, "Failed to append PVC to resource list")
+		}
+
+		factory := veleroClient.NewDynamicFactory(dynamicClient)
+		if err = install.Install(factory, resources, os.Stdout); err != nil {
+			return errors.Wrap(err, "Failed to create PVC")
+		}
+		return nil
+}
+
+func handleUnstructuredPVC(obj runtime.Object) (*corev1api.PersistentVolumeClaim, error) {
+	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&obj)
+	if err != nil {
+		return nil, err
+	}
+	unstructuredPVC := &unstructured.Unstructured{Object: unstructuredObj}
+
+	// handle PVC for the purpose of dynamic provisioning
+	pvc, ok := obj.(*corev1api.PersistentVolumeClaim)
+	if ok {
+		if pvc.Spec.VolumeName != ""{
+			// use the unstructured helpers here since we're only deleting and
+			// the unstructured converter will add back (empty) fields for metadata
+			// and status that we removed earlier.
+			unstructured.RemoveNestedField(unstructuredPVC.Object, "spec", "volumeName")
+			annotations := unstructuredPVC.GetAnnotations()
+			delete(annotations, "pv.kubernetes.io/bind-completed")
+			delete(annotations, "pv.kubernetes.io/bound-by-controller")
+			unstructuredPVC.SetAnnotations(annotations)
+		}
+	}
+
+	updatedPVC := new(corev1api.PersistentVolumeClaim)
+	if err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredPVC.Object, updatedPVC); err != nil {
+		return nil, errors.Wrap(err, "Failed to convert object from unstructured to PVC")
+	}
+
+	return updatedPVC, nil
+}
+
+func appendUnstructuredPVC(list *unstructured.UnstructuredList, obj runtime.Object) error {
+	u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&obj)
+
+	// Remove the status field so we're not sending blank data to the server.
+	// On CRDs, having an empty status is actually a validation error.
+	delete(u, "status")
+	if err != nil {
+		return err
+	}
+	list.Items = append(list.Items, unstructured.Unstructured{Object: u})
+	return nil
 }

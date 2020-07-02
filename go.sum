@@ -585,6 +585,7 @@ k8s.io/api v0.17.0 h1:H9d/lw+VkZKEVIUc8F3wgiQ+FUXTTr21M87jXLU7yqM=
 k8s.io/api v0.17.0/go.mod h1:npsyOePkeP0CPwyGfXDHxvypiYMJxBWAMpQxCaJ4ZxI=
 k8s.io/api v0.17.4 h1:HbwOhDapkguO8lTAE8OX3hdF2qp8GtpC9CW/MQATXXo=
 k8s.io/api v0.17.4/go.mod h1:5qxx6vjmwUVG2nHQTKGlLts8Tbok8PzHl4vHtVFuZCA=
+k8s.io/apiextensions-apiserver v0.17.4 h1:ZKFnw3cJrGZ/9s6y+DerTF4FL+dmK0a04A++7JkmMho=
 k8s.io/apiextensions-apiserver v0.17.4/go.mod h1:rCbbbaFS/s3Qau3/1HbPlHblrWpFivoaLYccCffvQGI=
 k8s.io/apimachinery v0.17.0/go.mod h1:b9qmWdKlLuU9EBh+06BtLcSf/Mu89rWL33naRxs1uZg=
 k8s.io/apimachinery v0.17.1-beta.0 h1:0Wl/KpAiFOMe9to5h8x2Y6JnjV+BEWJiTcUk1Vx7zdE=
