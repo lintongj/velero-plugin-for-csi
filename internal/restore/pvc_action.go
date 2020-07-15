@@ -18,10 +18,7 @@ package restore
 
 import (
 	"fmt"
-	veleroClient "github.com/vmware-tanzu/velero/pkg/client"
-	"github.com/vmware-tanzu/velero/pkg/install"
-	"os"
-
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -107,7 +104,7 @@ func (p *PVCRestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInp
 		}, nil
 	}
 
-	_, snapClient, err := util.GetClients()
+	kubeClient, snapClient, err := util.GetClients()
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
@@ -135,11 +132,11 @@ func (p *PVCRestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInp
 	resetPVCSpec(&pvc, volumeSnapshotName)
 
 	p.Log.Info("Ready to hack PVC")
-	if err = createPVCResource(&pvc, p.Log); err != nil {
+	if err = createPVC(&pvc, kubeClient.CoreV1(), p.Log); err != nil {
 		p.Log.Errorf("Failed to create PVC: %v", err)
 		return nil, errors.WithStack(err)
 	}
-	p.Log.Info("PVC %s created", pvc.Name)
+	p.Log.Infof("PVC %s created", pvc.Name)
 
 	p.Log.Infof("Returning from PVCRestoreItemAction for PVC %s/%s", pvc.Namespace, pvc.Name)
 
@@ -148,34 +145,20 @@ func (p *PVCRestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInp
 	}, nil
 }
 
-func createPVCResource(pvc *corev1api.PersistentVolumeClaim, logger logrus.FieldLogger) error {
-		config, err := veleroClient.LoadConfig()
-		if err != nil {
-			return errors.Wrap(err, "Failed to read config file")
-		}
+func createPVC(pvc *corev1api.PersistentVolumeClaim, corev1interface corev1.CoreV1Interface, logger logrus.FieldLogger) error {
+	logger.Infof("Original PVC:  %v", pvc)
+	pvc, err := handleUnstructuredPVC(pvc)
+	if err != nil {
+		return errors.Wrap(err, "Failed to handle unstructured PVC for the purpose of dynamic provisioning")
+	}
 
-		dynamicClient, err := veleroClient.NewFactory("velero", config).DynamicClient()
-		if err != nil {
-			return errors.WithStack(err)
-		}
-
-		pvc, err = handleUnstructuredPVC(pvc)
-		if err != nil {
-			return errors.Wrap(err, "Failed to handle unstructured PVC for the purpose of dynamic provisioning")
-		}
-
-		logger.Infof("PVC = %v", pvc)
-
-		resources := new(unstructured.UnstructuredList)
-		if err := appendUnstructuredPVC(resources, pvc); err != nil {
-			return errors.Wrap(err, "Failed to append PVC to resource list")
-		}
-
-		factory := veleroClient.NewDynamicFactory(dynamicClient)
-		if err = install.Install(factory, resources, os.Stdout); err != nil {
-			return errors.Wrap(err, "Failed to create PVC")
-		}
-		return nil
+	logger.Infof("PVC constructed:  %v", pvc)
+	createdPVC, err := corev1interface.PersistentVolumeClaims(pvc.Namespace).Create(pvc)
+	if err != nil {
+		return errors.Wrap(err, "Failed to create PVC")
+	}
+	logger.Infof("PVC created: %v", createdPVC)
+	return nil
 }
 
 func handleUnstructuredPVC(obj runtime.Object) (*corev1api.PersistentVolumeClaim, error) {
